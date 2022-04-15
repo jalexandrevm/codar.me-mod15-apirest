@@ -1,133 +1,219 @@
-from django.test import TestCase, Client
+from datetime import datetime, timezone
+import json
 from agenda.models import Agendamento
+from rest_framework.test import APITestCase
+from django.contrib.auth.models import User
 
 # Create your tests here.
-class TestAgendamentoCriar(TestCase):
-    def test_criar_agendamento_ok(self):
-        obj = Agendamento(
-            data_horario="2022-04-11T11:30:00Z",
-            nome_cliente="Izabel Pires",
-            email_cliente="izapir@gente.com",
-            telefone_cliente="(18)3219-0291"
-        )
-        obj.save()
-        self.assertIn(obj, Agendamento.objects.all())
-    def test_criar_agendamento_data_anterior(self):
-        obj = Agendamento(
-            data_horario="2022-04-04T11:30:00Z",
-            nome_cliente="Pietro Pires",
-            email_cliente="piepir@gente.com",
-            telefone_cliente="(18)3219-0291"
-        )
-        obj.save()
-        self.assertIn(obj, Agendamento.objects.all())
-    def test_criar_agendamento_hora_fora_atendimento(self):
-        cliente = Client()
-        obj = Agendamento(
-            data_horario="2022-04-11T07:30:00Z",
-            nome_cliente="Fabrício Santos",
-            email_cliente="fabsan@gente.com",
-            telefone_cliente="(18)3219-0291"
-        )
-        obj.save()
-        self.assertIn(obj, Agendamento.objects.all())
-    def test_criar_agendamento_email_data_hora_repetido(self):
-        cliente = Client()
-        obj1 = Agendamento(
-            data_horario="2022-04-11T07:30:00Z",
-            nome_cliente="Fabrício Santos",
-            email_cliente="fabsan@gente.com",
-            telefone_cliente="(18)3219-0291"
-        )
-        obj1.save()
-        obj2 = Agendamento(
-            data_horario="2022-04-11T07:30:00Z",
-            nome_cliente="Gustavo Gomes",
-            email_cliente="fabsan@gente.com",
-            telefone_cliente="(18)3219-0291"
-        )
-        obj2.save()
-        self.assertIn(obj1, Agendamento.objects.all())
-        self.assertIn(obj2, Agendamento.objects.all())
+# exercício 1
+class TestListaAgendamento(APITestCase):
+    def setUp(self) -> None:
+        usr_test = User()
+        usr_test.username = "jalexandrevm"
+        usr_test.email = "testando@gente.com"
+        usr_test.set_password("123")
+        usr_test.date_joined = datetime.now(tz=timezone.utc)
+        usr_test.save()
 
-class TestSerializerAgendamento(TestCase):
-    def test_cria_agendamento_ok(self):
-        obj = {
-            "data_horario": "2022-04-11T11:30:00Z",
-            "nome_cliente": "Izabel Pires",
-            "email_cliente": "izapir@gente.com",
-            "telefone_cliente": "(18)3219-0291"
+    def test_listagem_vazia(self):
+        self.client.login(username="jalexandrevm", password="123")
+        response = self.client.get(
+            "/api/agendamentos/?username=jalexandrevm",
+        )
+        data = json.loads(response.content)
+        self.assertEqual(data, [])
+
+    def test_listagem_agendamentos_criados(self):
+        Agendamento.objects.create(
+            data_horario=datetime(2022, 4, 15, 10, 30, tzinfo=timezone.utc),
+            nome_cliente="Pinheiro",
+            email_cliente="pin@gente.com",
+            telefone_cliente="3465-5218",
+            prestador=User.objects.filter(username="jalexandrevm")[0],
+        )
+        agendamento_serializado = {
+            "id": 1,
+            "data_horario": "2022-04-15T10:30:00Z",
+            "nome_cliente": "Pinheiro",
+            "email_cliente": "pin@gente.com",
+            "telefone_cliente": "3465-5218",
+            "prestador": "jalexandrevm",
         }
-        cliente = Client()
-        response = cliente.post("/api/agendamentos/", obj)
-        self.assertEqual(response.status_code, 201)
-    def test_cria_agendamento_data_anterior(self):
-        obj = {
-            "data_horario": "2022-04-02T11:30:00Z",
-            "nome_cliente": "Izabel Pires",
-            "email_cliente": "izapir@gente.com",
-            "telefone_cliente": "(18)3219-0291"
+        self.client.login(username="jalexandrevm", password="123")
+        response = self.client.get("/api/agendamentos/?username=jalexandrevm")
+        data = json.loads(response.content)
+        self.assertEqual(data[0], agendamento_serializado)
+
+
+# exercício 2 e exercício 3
+class TestCriacaoAgendamento(APITestCase):
+    def setUp(self) -> None:
+        usr_test = User()
+        usr_test.username = "jalexandrevm"
+        usr_test.set_password("123")
+        usr_test.email = "testando@gente.com"
+        usr_test.date_joined = datetime.now(tz=timezone.utc)
+        usr_test.save()
+
+    def test_cria_agendamento(self):
+        agendamento_request_data = {
+            "data_horario": "2022-04-15T10:30:00Z",
+            "nome_cliente": "Pinheiro",
+            "email_cliente": "pin@gente.com",
+            "telefone_cliente": "3465-5218",
+            "prestador": "jalexandrevm",
         }
-        cliente = Client()
-        response = cliente.post("/api/agendamentos/", obj)
+        response = self.client.post(
+            "/api/agendamentos/", agendamento_request_data, format="json"
+        )
+        sucesso = self.client.login(username="jalexandrevm", password="123")
+        if sucesso:
+            agendamento_criado = self.client.get(
+                f"/api/agendamentos/{response.json()['id']}/?username={response.json()['prestador']}"
+            )
+            self.assertEqual(response.json(), agendamento_criado.json())
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(agendamento_criado.status_code, 200)
+            self.assertEqual(response.json()["nome_cliente"], "Pinheiro")
+            self.assertEqual(response.json()["email_cliente"], "pin@gente.com")
+
+    def test_cria_agendamento_data_passado(self):
+        agendamento_request_data = {
+            "data_horario": "2022-04-01T10:30:00Z",
+            "nome_cliente": "Pinheiro",
+            "email_cliente": "pin@gente.com",
+            "telefone_cliente": "3465-5218",
+            "prestador": "jalexandrevm",
+        }
+        response = self.client.post(
+            "/api/agendamentos/", agendamento_request_data, format="json"
+        )
+        erro = "Agendamento não pode ser no passado!"
         self.assertEqual(response.status_code, 400)
-    def test_cria_agendamento_hora_fora_atendimento(self):
-        obj = {
-            "data_horario": "2022-04-15T06:30:00Z",
-            "nome_cliente": "Izabel Pires",
-            "email_cliente": "izapir@gente.com",
-            "telefone_cliente": "(18)3219-0291"
+        self.assertIn(erro, response.json()["data_horario"])
+
+    def test_cria_agendamento_hora_invalida(self):
+        agendamento_request_data = {
+            "data_horario": "2022-04-15T10:32:00Z",
+            "nome_cliente": "Pinheiro",
+            "email_cliente": "pin@gente.com",
+            "telefone_cliente": "3465-5218",
+            "prestador": "jalexandrevm",
         }
-        cliente = Client()
-        response = cliente.post("/api/agendamentos/", obj)
+        response = self.client.post(
+            "/api/agendamentos/", agendamento_request_data, format="json"
+        )
+        erro = "Agendamentos devem ser de 30 em 30 minutos!"
         self.assertEqual(response.status_code, 400)
-    def test_cria_agendamento_hora_errada(self):
-        obj = {
-            "data_horario": "2022-04-15T09:01:00Z",
-            "nome_cliente": "Izabel Pires",
-            "email_cliente": "izapir@gente.com",
-            "telefone_cliente": "(18)3219-0291"
+        self.assertIn(erro, response.json()["data_horario"])
+
+    def test_cria_agendamento_email_repetido(self):
+        agendamento_request_data = {
+            "data_horario": "2022-04-15T10:30:00Z",
+            "nome_cliente": "Pinheiro",
+            "email_cliente": "pin@gente.com",
+            "telefone_cliente": "3465-5218",
+            "prestador": "jalexandrevm",
         }
-        cliente = Client()
-        response = cliente.post("/api/agendamentos/", obj)
+        response = self.client.post(
+            "/api/agendamentos/", agendamento_request_data, format="json"
+        )
+        self.assertEqual(response.status_code, 201)
+        agendamento_request_data["data_horario"] = "2022-04-15T11:30:00Z"
+        response = self.client.post(
+            "/api/agendamentos/", agendamento_request_data, format="json"
+        )
+        erro = "Mesmo e-mail não pode agendar mais de uma vez por dia!"
         self.assertEqual(response.status_code, 400)
-    def test_valida_cria_agendamento_mesmo_dia(self):
-        obj = {
-            "data_horario": "2022-04-15T09:00:00Z",
-            "nome_cliente": "Izabel Pires",
-            "email_cliente": "izapir@gente.com",
-            "telefone_cliente": "(18)3219-0291"
+        self.assertIn(erro, response.json()["non_field_errors"])
+
+    def test_cria_agendamento_telefone_invalido(self):
+        agendamento_request_data = {
+            "data_horario": "2022-04-15T10:30:00Z",
+            "nome_cliente": "Pinheiro",
+            "email_cliente": "pin@gente.com",
+            "telefone_cliente": "+3465-5218",
+            "prestador": "jalexandrevm",
         }
-        cliente = Client()
-        response = cliente.post("/api/agendamentos/", obj)
-        self.assertEqual(response.status_code, 201)
-        obj["email_cliente"] = "iza@gente.com"
-        response = cliente.post("/api/agendamentos/", obj)
+        response = self.client.post(
+            "/api/agendamentos/", agendamento_request_data, format="json"
+        )
+        erro = "Formato do telefone inválido !!! (+ppp(ddd)NNNNN-nnnn)"
         self.assertEqual(response.status_code, 400)
-    def test_valida_cria_agendamento_mesmo_dia_email(self):
-        obj = {
-            "data_horario": "2022-04-15T09:00:00Z",
-            "nome_cliente": "Izabel Pires",
-            "email_cliente": "izapir@gente.com",
-            "telefone_cliente": "(18)3219-0291"
+        self.assertIn(erro, response.json()["telefone_cliente"])
+
+
+# exercícios 6 a 9
+class TestHorariosListar(APITestCase):
+    def setUp(self) -> None:
+        usr_test1 = User()
+        usr_test1.username = "alex"
+        usr_test1.set_password("123")
+        usr_test1.email = "alex@gente.com"
+        usr_test1.date_joined = datetime.now(tz=timezone.utc)
+        usr_test1.is_superuser = True
+        usr_test1.save()
+        usr_test2 = User()
+        usr_test2.username = "andre"
+        usr_test2.set_password("123")
+        usr_test2.email = "andre@gente.com"
+        usr_test2.date_joined = datetime.now(tz=timezone.utc)
+        usr_test2.save()
+        agendamento_request_data = {
+            "data_horario": "2022-04-25T10:30:00Z",
+            "nome_cliente": "Pinheiro",
+            "email_cliente": "pin@gente.com",
+            "telefone_cliente": "3465-5218",
+            "prestador": "alex",
         }
-        cliente = Client()
-        response = cliente.post("/api/agendamentos/", obj)
-        self.assertEqual(response.status_code, 201)
-        obj["data_horario"] = "2022-04-15T09:30:00Z"
-        response = cliente.post("/api/agendamentos/", obj)
-        self.assertEqual(response.status_code, 400)
-    def test_valida_cria_agendamento_mesmo_dia_apos_cancelar(self):
-        obj = {
-            "data_horario": "2022-04-15T09:00:00Z",
-            "nome_cliente": "Izabel Pires",
-            "email_cliente": "izapir@gente.com",
-            "telefone_cliente": "(18)3219-0291"
+        self.client.post("/api/agendamentos/", agendamento_request_data, format="json")
+        agendamento_request_data = {
+            "data_horario": "2022-04-25T11:30:00Z",
+            "nome_cliente": "Francisco",
+            "email_cliente": "chico@gente.com",
+            "telefone_cliente": "(98)3465-5218",
+            "prestador": "alex",
         }
-        cliente = Client()
-        response = cliente.post("/api/agendamentos/", obj)
-        self.assertEqual(response.status_code, 201)
-        response = cliente.delete(f"/api/agendamentos/{response.json()['id']}/")
-        self.assertEqual(response.status_code, 202)
-        response = cliente.post("/api/agendamentos/", obj)
-        self.assertEqual(response.status_code, 201)
+        self.client.post("/api/agendamentos/", agendamento_request_data, format="json")
+        agendamento_request_data = {
+            "data_horario": "2022-04-25T10:30:00Z",
+            "nome_cliente": "Roberto",
+            "email_cliente": "beto@gente.com",
+            "telefone_cliente": "3465-5218",
+            "prestador": "andre",
+        }
+        self.client.post("/api/agendamentos/", agendamento_request_data, format="json")
+        agendamento_request_data = {
+            "data_horario": "2022-04-25T09:30:00Z",
+            "nome_cliente": "Eduardo",
+            "email_cliente": "edu@gente.com",
+            "telefone_cliente": "(98)3465-5218",
+            "prestador": "andre",
+        }
+        self.client.post("/api/agendamentos/", agendamento_request_data, format="json")
+
+    def test_lista_disponiveis(self):
+        lista_alex = self.client.get("/api/horarios/?data=2022-04-25&username=alex")
+        lista_andre = self.client.get("/api/horarios/?data=2022-04-25&username=andre")
+        self.assertEqual(len(lista_alex.json()), 14)
+        self.assertEqual(len(lista_andre.json()), 14)
+
+    def test_lista_sem_autenticacao(self):
+        retorno_andre = self.client.get("/api/prestadores/")
+        self.assertEqual(
+            retorno_andre.json()["detail"],
+            "Authentication credentials were not provided.",
+        )
+
+    def test_lista_sem_permissao(self):
+        self.client.login(username="andre", password="123")
+        retorno_andre = self.client.get("/api/prestadores/")
+        self.assertEqual(
+            retorno_andre.json()["detail"],
+            "You do not have permission to perform this action.",
+        )
+
+    def test_lista_permissao_super_user(self):
+        self.client.login(username="alex", password="123")
+        retorno_alex = self.client.get("/api/prestadores/")
+        self.assertEqual(retorno_alex.status_code, 200)
